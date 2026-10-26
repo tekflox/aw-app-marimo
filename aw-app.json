@@ -2,8 +2,8 @@
   "manifest_version": 1,
   "id": "marimo",
   "name": "Marimo",
-  "version": "0.1.0",
-  "description": "A reactive Python notebook in your workspace. Open it from the Apps grid and start writing cells — change one and everything that depends on it re-runs by itself, so a notebook can never show a stale result. Notebooks are plain .py files kept on the workspace disk, so they survive restarts, updates and reinstalls, and nothing is exposed outside the workspace.",
+  "version": "0.2.0",
+  "description": "A reactive Python notebook in your workspace. Open it from the Apps grid and start writing cells \u2014 change one and everything that depends on it re-runs by itself, so a notebook can never show a stale result. Notebooks are plain .py files kept on the workspace disk, so they survive restarts, updates and reinstalls, and nothing is exposed outside the workspace.",
   "icon": "book-open",
   "tier": "container",
   "category": "Dev Tools",
@@ -26,7 +26,7 @@
         "source": "$AW_APP_DATA",
         "target": "/data",
         "mode": "rw",
-        "reason": "Everything the user owns: the notebooks themselves under /data/notebooks (plain .py files) and Marimo's own user config — theme, keymap, AI settings — under /data/home. Without it every container recreation (app update, workspace redeploy, reinstall) loses every notebook that was ever written."
+        "reason": "Everything the user owns: the notebooks themselves under /data/notebooks (plain .py files) and Marimo's own user config \u2014 theme, keymap, AI settings \u2014 under /data/home. Without it every container recreation (app update, workspace redeploy, reinstall) loses every notebook that was ever written."
       }
     ]
   },

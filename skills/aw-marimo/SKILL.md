@@ -30,6 +30,13 @@ not what the window uses.
 Both entries sit behind the workspace's `IdentityGuard`, so both require
 workspace authentication.
 
+**Known quirk:** marimo's file-browser links (including "Create a new
+notebook") are `target="_blank"`. From inside the app window that is a popup
+from a cross-origin iframe, so the browser blocks it and the click looks like
+it did nothing. Use the window title bar's pop-out button to create or switch
+notebooks, then return to the window. A notebook already open in the window
+edits and runs normally.
+
 ## Where notebooks live
 
 | | |

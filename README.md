@@ -28,6 +28,22 @@ which is marimo's file browser over the notebooks directory. The path entry
 `/api/apps/marimo/` is mounted as well and works the same way — useful for
 `curl` and for health checks — but the window does not use it.
 
+### One quirk of the file browser inside the window
+
+Every link in marimo's own file browser — "Create a new notebook" and each
+existing notebook — opens with `target="_blank"`, i.e. in a **new browser
+tab**. Inside the app window that is a popup from a cross-origin iframe, so
+the browser blocks it and clicking appears to do nothing. The notebook
+editor itself works perfectly in the window; it is only the file browser's
+links that cannot drive it.
+
+So from the window, use the title bar's **pop-out** button to get marimo in
+its own tab when you want to create or switch notebooks, then come back. A
+notebook already open in the window keeps working normally. This is marimo's
+own markup, not something this app sets, and fixing it would mean patching
+marimo's bundle at build time — not done, deliberately, since it would break
+silently on every marimo upgrade.
+
 ## Where your work lives
 
 | | |

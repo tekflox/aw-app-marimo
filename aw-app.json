@@ -1,0 +1,71 @@
+{
+  "manifest_version": 1,
+  "id": "marimo",
+  "name": "Marimo",
+  "version": "0.1.0",
+  "description": "A reactive Python notebook in your workspace. Open it from the Apps grid and start writing cells — change one and everything that depends on it re-runs by itself, so a notebook can never show a stale result. Notebooks are plain .py files kept on the workspace disk, so they survive restarts, updates and reinstalls, and nothing is exposed outside the workspace.",
+  "icon": "book-open",
+  "tier": "container",
+  "category": "Dev Tools",
+  "requires_ui_refresh": true,
+  "publisher": "TekFlox",
+  "resource_estimate": {
+    "cpu": "medium",
+    "memory": "~500 MB",
+    "disk": "~800 MB"
+  },
+  "runtime": {
+    "image": "ghcr.io/tekflox/aw-app-marimo:latest",
+    "port": 2718,
+    "resources": {
+      "cpus": 1,
+      "mem_mb": 1536
+    },
+    "volumes": [
+      {
+        "source": "$AW_APP_DATA",
+        "target": "/data",
+        "mode": "rw",
+        "reason": "Everything the user owns: the notebooks themselves under /data/notebooks (plain .py files) and Marimo's own user config — theme, keymap, AI settings — under /data/home. Without it every container recreation (app update, workspace redeploy, reinstall) loses every notebook that was ever written."
+      }
+    ]
+  },
+  "permissions": [
+    "containers:manage",
+    "fs:workspace-data"
+  ],
+  "contributes": {
+    "windows": [
+      {
+        "id": "marimo.main",
+        "title": "Marimo",
+        "icon": "book-open",
+        "body": {
+          "type": "managed_app",
+          "kind": "web",
+          "path": "/"
+        }
+      }
+    ],
+    "skills": [
+      {
+        "id": "aw-marimo",
+        "path": "skills/aw-marimo/SKILL.md",
+        "description": "Where this workspace's Marimo notebooks live on disk, how to open the app, what does and does not survive a container recreate, and the two settings that must never be flipped on it."
+      }
+    ]
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "auto_start": {
+        "type": "boolean",
+        "default": true,
+        "title": "Auto-start",
+        "description": "Start Marimo automatically when the workspace starts."
+      }
+    },
+    "required": []
+  },
+  "dependencies": {}
+}

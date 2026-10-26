@@ -1,0 +1,113 @@
+name: Build Marimo image
+
+# Builds this app's container image and pushes it to
+# ghcr.io/<owner>/aw-app-marimo.
+#
+#   gh workflow run build.yml                          # amd64 + linux/arm64 (default)
+#   gh workflow run build.yml -f include_arm64=false   # amd64 only (skip QEMU arm64)
+#
+# Push-triggered on purpose, which includes the release bot's own
+# `chore(release): bump to vX.Y.Z` commit. That is what structurally closes
+# the "green release, stale image" trap: a green release.yml run says
+# nothing about this workflow, and a Tier-2 app advertising a new version
+# while its container runs old code is the documented failure mode in this
+# path (card ci:container-app-release-does-not-build-the-image, hit live on
+# aw-app-kb v0.40.0). Verify the ghcr package digest, not the release run.
+#
+# One-time manual step after the FIRST push: GitHub creates the container
+# package private regardless of this repo's visibility, and there is no
+# REST/GraphQL endpoint to flip it (confirmed on aw-app-browser, 2026-07-28).
+# Until someone with org admin does it by hand at
+#   github.com/orgs/tekflox/packages/container/aw-app-marimo/settings
+#   -> Danger Zone -> Change visibility -> Public
+# a tokenless install cannot pull this image.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      include_arm64:
+        description: 'Also build linux/arm64 (QEMU emulation; slower)'
+        type: boolean
+        default: true
+
+concurrency:
+  group: build-aw-app-marimo-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: aw-app-marimo
+    runs-on: [self-hosted, aw-baremetal]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr.io rejects mixed-case namespaces — lowercase the owner login.
+      - name: Lowercase repo owner
+        id: owner
+        run: echo "lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve platforms
+        id: plat
+        run: |
+          # Multi-arch by default — this also covers automatic
+          # push-triggered builds (the release-bump commit), which have no
+          # workflow_dispatch `inputs` to read. amd64-only is an explicit
+          # opt-OUT via a manual dispatch, not the default path.
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.include_arm64 == false }}" = "true" ]; then
+            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
+          else
+            echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Read app version
+        id: version
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print(f"version={json.load(open('aw-app.json'))['version']}")
+          PY
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: container
+          file: container/Dockerfile
+          platforms: ${{ steps.plat.outputs.platforms }}
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.lc }}/aw-app-marimo:latest
+            ghcr.io/${{ steps.owner.outputs.lc }}/aw-app-marimo:v${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.owner.outputs.lc }}/aw-app-marimo:${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/${{ steps.owner.outputs.lc }}/aw-app-marimo:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ steps.owner.outputs.lc }}/aw-app-marimo:buildcache,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "## 📓 aw-app-marimo pushed"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Image** | \`ghcr.io/${{ steps.owner.outputs.lc }}/aw-app-marimo:latest\` |"
+            echo "| **Version tag** | \`ghcr.io/${{ steps.owner.outputs.lc }}/aw-app-marimo:v${{ steps.version.outputs.version }}\` |"
+            echo "| **Platforms** | ${{ steps.plat.outputs.platforms }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

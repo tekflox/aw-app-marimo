@@ -1,0 +1,55 @@
+name: Test
+
+# Push/PR-triggered manifest validation + test suite.
+#
+# Inherited from aw-app-template, with the template's coverage gate removed
+# rather than carried over: this app is Tier-2 and ships NO workspace-side
+# Python package (no `template_app`, no `pyproject.toml`), so there is
+# nothing for --cov to measure. A coverage gate over a suite that only
+# asserts on JSON and a shell script would report 100% of nothing, which is
+# worse than not having one — it reads as a quality signal and carries none.
+# What this suite actually guards is the manifest's scope invariants
+# (tests/test_manifest_invariants.py) and the manifest's structural validity.
+#
+# runs-on is derived from the repo owner rather than hardcoded, and it is
+# load-bearing twice over (both reasons quoted from the template):
+#   1. The [self-hosted, aw-baremetal] runners live in tekflox org runner
+#      group 3 (aw-private), and an org runner group can only be shared with
+#      repos IN that org. A repo outside it can never be added, so its jobs
+#      would not fail — they would queue forever, which reads as "still
+#      running".
+#   2. The `pull_request:` trigger below is unqualified, so on a PUBLIC repo
+#      anyone can open one from a fork. Fork PR + self-hosted runner is
+#      arbitrary code execution on the bare-metal host that runs the whole
+#      workspace. GitHub-hosted runners are disposable VMs with a read-only
+#      token, which is what makes an open `pull_request:` trigger safe.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ${{ fromJSON(startsWith(github.repository, 'tekflox/') && '["self-hosted","aw-baremetal"]' || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r requirements-dev.txt pytest jsonschema
+      # tests/validate_manifest.py falls back to a sibling aw-marketplace
+      # checkout for the canonical schema when this repo has no local
+      # schemas/ copy (by design). actions/checkout refuses a `path` that
+      # escapes $GITHUB_WORKSPACE, so a true sibling checkout isn't possible
+      # on a real runner — check it out into a subdirectory and point
+      # --schema at it explicitly, bypassing the fallback altogether.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: tekflox/aw-marketplace
+          path: .aw-marketplace-schema
+      - name: Validate manifest
+        run: python3 tests/validate_manifest.py aw-app.json --schema .aw-marketplace-schema/schemas/aw-app.schema.json
+      - name: Test suite
+        run: pytest tests/ -q

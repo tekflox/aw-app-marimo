@@ -188,6 +188,16 @@ def _encode_within_cap(content: str, path: str) -> bytes:
     return data
 
 
+#: What a notebook written here ends up as on disk. `mkstemp` creates 0600
+#: and `os.replace` carries that mode onto the destination, so without this
+#: an agent-written notebook is unreadable to everyone but root — including
+#: on the host path under `.aw-workspace/data/marimo/notebooks/`, where a
+#: person is explicitly meant to be able to read it. Found live, not in
+#: review: inside the container everything runs as root, so the UI and the
+#: tools both looked fine while the host copy was 0600.
+NOTEBOOK_MODE = 0o644
+
+
 def _atomic_write(resolved: Path, data: bytes) -> None:
     """Write via a same-directory temp file + os.replace.
 
@@ -204,6 +214,12 @@ def _atomic_write(resolved: Path, data: bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+        # Updating an existing notebook keeps whatever mode it already had;
+        # a new one gets the same mode an ordinary write would have made.
+        try:
+            os.chmod(tmp, resolved.stat().st_mode & 0o7777)
+        except FileNotFoundError:
+            os.chmod(tmp, NOTEBOOK_MODE)
         os.replace(tmp, resolved)
     except BaseException:
         tmp.unlink(missing_ok=True)

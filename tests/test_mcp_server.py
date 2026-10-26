@@ -198,6 +198,29 @@ def test_update_with_the_current_hash_succeeds(root):
 # atomic write
 # ---------------------------------------------------------------------------
 
+def test_a_created_notebook_is_readable_outside_the_container(root):
+    """0600 would make it root-only on the HOST path too.
+
+    Everything in this container runs as root, so a mode regression here is
+    invisible from inside it and only shows up when a person opens the file
+    under .aw-workspace/data/marimo/notebooks/ — which the card requires
+    they can. Caught live on the first end-to-end run, not in review.
+    """
+    invoke("create_notebook", path="perm.py", content="x = 1\n")
+    assert (root / "perm.py").stat().st_mode & 0o777 == mcp_server.NOTEBOOK_MODE
+
+
+def test_an_update_preserves_the_mode_the_notebook_already_had(root):
+    target = root / "owned.py"
+    invoke("create_notebook", path="owned.py", content="x = 1\n")
+    os.chmod(target, 0o640)
+
+    current = invoke("read_notebook", path="owned.py")["sha256"]
+    invoke("update_notebook", path="owned.py", content="x = 2\n", expected_hash=current)
+
+    assert target.stat().st_mode & 0o777 == 0o640
+
+
 def test_a_write_that_fails_mid_way_leaves_the_old_file_whole(root, monkeypatch):
     """Crash between temp-write and replace: old file, never a truncated one."""
     original = "original = 1\n" * 500

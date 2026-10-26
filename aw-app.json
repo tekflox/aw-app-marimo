@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "id": "marimo",
   "name": "Marimo",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A reactive Python notebook in your workspace. Open it from the Apps grid and start writing cells \u2014 change one and everything that depends on it re-runs by itself, so a notebook can never show a stale result. Notebooks are plain .py files kept on the workspace disk, so they survive restarts, updates and reinstalls, and nothing is exposed outside the workspace.",
   "icon": "book-open",
   "tier": "container",

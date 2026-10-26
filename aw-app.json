@@ -35,6 +35,17 @@
     "fs:workspace-data"
   ],
   "contributes": {
+    "mcp": {
+      "reload_on_save": false,
+      "provides": [
+        "list_notebooks",
+        "read_notebook",
+        "create_notebook",
+        "update_notebook",
+        "validate_notebook",
+        "execute_notebook"
+      ]
+    },
     "windows": [
       {
         "id": "marimo.main",
@@ -67,5 +78,15 @@
     },
     "required": []
   },
-  "dependencies": {}
+  "dependencies": {
+    "apps": [
+      {
+        "id": "mcp-gateway",
+        "version": ">=0.1.0",
+        "required": true,
+        "reason": "This app ships a static mcp.json (the 'marimo' server) that MCP Gateway discovers and merges; without the gateway no agent can reach its notebook tools."
+      }
+    ],
+    "note": "Runtime-enforced app dependency: aw-workspace loads mcp-gateway before this app so the gateway can scan marimo/mcp.json."
+  }
 }

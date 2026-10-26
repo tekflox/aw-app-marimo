@@ -23,6 +23,13 @@ FROM python:3.12-slim
 # this pin — bump it in a commit, never let the build float.
 ARG MARIMO_VERSION=0.25.2
 
+# The MCP SDK the agent-facing sidecar runs on, pinned for the same reason
+# marimo is: `:latest` floats, so a deliberate commit is the only thing that
+# makes an SDK upgrade reviewable. Held below 2.0 — that release moved and
+# renamed FastMCP (mcp==2.0.0 has no `mcp.server.fastmcp`), the same ceiling
+# aw-mcp-gateway pins itself to.
+ARG MCP_SDK_VERSION=1.30.0
+
 # uv is what makes marimo's inline script dependencies (PEP 723) work: a
 # notebook can declare its own packages in a header comment and marimo asks
 # uv to materialise them. That is the sanctioned reproducibility path here,
@@ -30,15 +37,31 @@ ARG MARIMO_VERSION=0.25.2
 # layer and die on the next recreate (README: "What survives a recreate").
 COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /uvx /usr/local/bin/
 
-RUN pip install --no-cache-dir "marimo==${MARIMO_VERSION}"
+# procps, for `ps`/`pgrep`. Not a convenience: the acceptance criterion for
+# execute's timeout is that no orphan process survives it, and the only way
+# to check that is the container's own process table — `python:3.12-slim`
+# ships neither tool, so without this the bound can only be taken on the
+# tool response's word, which is exactly what the criterion refuses.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir "marimo==${MARIMO_VERSION}" "mcp==${MCP_SDK_VERSION}"
 
 COPY entrypoint.sh /aw-entrypoint.sh
+COPY mcp_server.py /aw-mcp-server.py
 RUN chmod +x /aw-entrypoint.sh
 
 # Documentation only. The supervisor never publishes this port to the host:
 # the app is reached exclusively through the workspace's authenticated
 # reverse proxy, and that is load-bearing — see the README's auth section.
 EXPOSE 2718
+
+# The agent-facing MCP sidecar, reached by the workspace's MCP gateway at
+# http://aw-app-marimo:2719/mcp over the internal container network. Also
+# documentation only — publishing it would put an unauthenticated
+# code-execution surface on the host, same objection as 2718.
+EXPOSE 2719
 
 # Marimo's own health endpoint, probed in the probe this app was designed
 # from: GET /api/status -> 200 {"status":"healthy","mode":"edit",...}.

@@ -39,6 +39,26 @@ mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
 #
 # No --sandbox/--no-sandbox: the default (prompt in the UI, uv available)
 # is the scoped behaviour.
+
+# The agent-facing MCP sidecar, on 2719 (never published to the host). It
+# runs in a background restart loop rather than sharing marimo's fate: a bug
+# in the sidecar must not be able to take the notebook UI down, because an
+# observable change to the human UI is a regression, not a feature. The
+# failure stays loud anyway — a sidecar that is permanently broken shows up
+# as a dead/parked upstream in the MCP gateway and is named by
+# `aw-workspace-cli doctor`.
+#
+# The HEALTHCHECK deliberately stays on marimo's 2718 only. Probing 2719
+# there would recycle the whole container on a sidecar failure, which is the
+# exact coupling this loop exists to avoid.
+(
+  while true; do
+    python /aw-mcp-server.py || true
+    echo "aw-app-marimo: MCP sidecar exited, restarting in 2s" >&2
+    sleep 2
+  done
+) &
+
 exec marimo edit "$DATA_DIR/notebooks" \
     --headless \
     --host 0.0.0.0 \

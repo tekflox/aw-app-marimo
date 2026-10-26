@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "marimo": {
+      "enabled": true,
+      "type": "http",
+      "url": "http://aw-app-marimo:2719/mcp"
+    }
+  }
+}

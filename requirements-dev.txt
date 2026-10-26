@@ -1,2 +1,7 @@
 pytest>=8.0  # tests/test_manifest_invariants.py
 jsonschema>=4.0  # tests/validate_manifest.py
+# tests/test_mcp_server.py imports the sidecar, which imports FastMCP. Held
+# below 2.0 for the same reason the Dockerfile pins it there: mcp==2.0.0
+# moved and renamed FastMCP, so a floating dep would break the import rather
+# than fail a behaviour assertion.
+mcp>=1.2,<2.0  # tests/test_mcp_server.py

@@ -135,6 +135,102 @@ Tier-2 apps (`code-server` has the same one and is strictly more powerful,
 with the whole workspace tree mounted read-write). "Private" here means no
 public port and no tunnel.
 
+## Agent tools (MCP)
+
+Alongside the human UI the container runs a second process: a small MCP
+server on port **2719**, also never published to the host. The workspace's
+MCP gateway reaches it over the internal container network at
+`http://aw-app-marimo:2719/mcp` (registered by the committed, credential-free
+`mcp.json` at this repo's root) and agents see six tools prefixed
+`aw__marimo__`:
+
+| Tool | What it does |
+|---|---|
+| `list_notebooks` | Every `.py` under `/data/notebooks`, recursively, with size, mtime and sha256 |
+| `read_notebook` | One notebook's full source plus its sha256 |
+| `create_notebook` | Create a new one. Refuses to overwrite; omitted content writes a minimal marimo skeleton |
+| `update_notebook` | Replace content, requiring the sha256 you last read as `expected_hash` |
+| `validate_notebook` | Parse and structurally check. **Never imports or runs the file** |
+| `execute_notebook` | Run the notebook headless, start to finish, and return stdout/stderr/exit/timing |
+
+All paths are relative to `/data/notebooks` and must end in `.py`. One
+resolver guards every one of them, `execute` included: absolute and empty
+paths are refused as `invalid_path`, and anything that resolves outside the
+root — `../`, or a symlink planted inside the tree pointing out — as
+`path_outside_root`. Other codes: `not_found`, `already_exists`,
+`not_a_notebook`, `hash_conflict`, `content_too_large`. They arrive as MCP
+tool errors whose text is the JSON body, behind FastMCP's own
+`Error executing tool <name>: ` prefix.
+
+### Two semantics that will surprise you
+
+- **A cell's trailing display expression is not stdout.** Run as a script, a
+  notebook prints only what it actually `print()`s — the rich display value
+  marimo renders in the UI is not written anywhere. A notebook meant to hand
+  a result back to an agent has to `print()` it.
+- **PEP 723 inline dependencies are not materialised.** `execute_notebook`
+  runs plain `python <file>`, not `uv run --script`, so a header-declared
+  package that is not already in the image comes back as `status: "error"`
+  with the ImportError in stderr. The edit UI remains the PEP 723 path; the
+  alternative was unbounded network installs inside the timeout budget.
+
+### Concurrent writers: a real limitation, not a bug being hidden
+
+`expected_hash` protects one agent against another. It does **not** protect
+against a human with the same notebook open in the Marimo editor. Those are
+two independent writers of one file, and marimo's own save can clobber an
+MCP write exactly as an MCP write can clobber a human's unsaved buffer.
+There is deliberately no locking scheme here. If an agent and a person are
+both working a notebook, one side can lose a change.
+
+### The execution threat model
+
+`execute_notebook` runs arbitrary Python by design — that is the feature.
+Nobody should claim the *code* is sandboxed. **The container is the
+boundary, not the interpreter.** The threat model is "a notebook misbehaves
+inside its own container", not "a notebook is prevented from doing anything
+unusual".
+
+What *is* bounded:
+
+- **Filesystem** — the container mounts exactly one volume (`$AW_APP_DATA` →
+  `/data`), no workspace tree, no container socket, and every tool path
+  argument is confined to `/data/notebooks` by the resolver above.
+- **Wall time** — default 120s, hard cap 600s (a larger request is clamped
+  and the applied value returned). On timeout the run's whole process group
+  gets SIGTERM, five seconds, then SIGKILL, so a notebook cannot outlive its
+  own timeout and neither can anything it spawned.
+- **Output** — stdout and stderr are capped at 64 KiB each, with explicit
+  `stdout_truncated` / `stderr_truncated` flags. Nothing is truncated
+  silently.
+- **Concurrency** — at most two notebooks run at once. A third call is
+  refused immediately with `status: "refused_busy"` and the running count,
+  rather than queued.
+- **Process tree** — each run gets its own session, and its process group is
+  reaped when the run ends, on success as well as on timeout. `execute` does
+  not leave background jobs behind.
+
+What is **not** bounded: the Python itself. A running notebook can write
+anywhere in `/data` (including `/data/home`), use whatever network egress
+the container has, and burn its CPU/memory envelope (1 cpu / 1536 MB).
+
+Port 2719 is unauthenticated to peers on the internal network. That adds no
+new exposure class: marimo's own 2718 already serves an unauthenticated
+(`--no-token`, load-bearing — see the auth section above) code-execution UI
+to exactly the same peers. Anything that could abuse 2719 could already
+abuse 2718. The boundary in front of both is "no host port published +
+workspace network membership", the same posture as `aw-app-kb`.
+
+### How the sidecar is supervised
+
+`entrypoint.sh` starts it in a background restart loop and keeps
+`exec marimo edit` as the container's foreground process, so a crash in the
+sidecar can never take the notebook UI down. The `HEALTHCHECK` deliberately
+stays on marimo's 2718 only — probing 2719 there would recycle the whole
+container on a sidecar failure, inverting that decoupling. A permanently
+broken sidecar still degrades loudly: the gateway parks the upstream and
+`aw-workspace-cli doctor` names it.
+
 ## Single user
 
 `marimo edit` assumes one trusted editor. There is no multi-user mode, no
@@ -145,11 +241,14 @@ a different architecture, not a setting.
 
 ```
 aw-app.json                     the manifest — app id, volume, window, capabilities
-container/Dockerfile            python:3.12-slim + pinned marimo + uv + HEALTHCHECK
-container/entrypoint.sh         prepares /data, exports HOME, execs marimo edit
+mcp.json                        gateway registration for the `marimo` MCP server
+container/Dockerfile            python:3.12-slim + pinned marimo + pinned mcp SDK + uv + HEALTHCHECK
+container/entrypoint.sh         prepares /data, starts the MCP sidecar, execs marimo edit
+container/mcp_server.py         the six agent-facing tools, FastMCP over streamable HTTP
 skills/aw-marimo/SKILL.md       what an agent needs to know about this app
 tests/validate_manifest.py      manifest schema + dangling-reference checks
 tests/test_manifest_invariants.py   this app's scope, as assertions
+tests/test_mcp_server.py        the sidecar's bounds, as assertions
 docs/architecture/aw-app-marimo.md  the design this was built from
 ```
 

@@ -152,3 +152,108 @@ def test_marimo_version_is_pinned(manifest):
     dockerfile = (ROOT / "container" / "Dockerfile").read_text()
     assert "ARG MARIMO_VERSION=" in dockerfile
     assert 'pip install --no-cache-dir "marimo==${MARIMO_VERSION}"' in dockerfile
+
+
+# --------------------------------------------------------------------------
+# The MCP contribution
+#
+# `contributes.mcp` is DOCUMENTATION — the gateway discovers upstreams only
+# by scanning `apps/<slug>/mcp.json` on disk. Declaring tools in the
+# manifest and shipping no mcp.json is what left aw-app-remote-host-cli with
+# 16 advertised tools and zero served, so these two have to be checked
+# against each other, not just individually.
+# --------------------------------------------------------------------------
+
+TOOLS = {
+    "list_notebooks",
+    "read_notebook",
+    "create_notebook",
+    "update_notebook",
+    "validate_notebook",
+    "execute_notebook",
+}
+
+
+@pytest.fixture(scope="module")
+def mcp_json() -> dict:
+    return json.loads((ROOT / "mcp.json").read_text())
+
+
+@pytest.fixture(scope="module")
+def sidecar() -> str:
+    return (ROOT / "container" / "mcp_server.py").read_text()
+
+
+def test_mcp_json_registers_exactly_one_server_named_marimo(mcp_json):
+    """The key is the caller-facing prefix: `marimo` -> `aw__marimo__*`."""
+    assert list(mcp_json["mcpServers"]) == ["marimo"]
+
+
+def test_mcp_json_points_at_the_container_over_the_internal_network(mcp_json):
+    server = mcp_json["mcpServers"]["marimo"]
+    assert server["enabled"] is True
+    assert server["type"] == "http"
+    # The STABLE container name, not an ephemeral container-id hostname: a
+    # cached dead id-hostname is the documented zombie-upstream failure.
+    assert server["url"] == "http://aw-app-marimo:2719/mcp"
+
+
+def test_mcp_json_carries_no_credential(mcp_json):
+    """This repo is public, so anything committed here is public."""
+    server = mcp_json["mcpServers"]["marimo"]
+    assert set(server) == {"enabled", "type", "url"}
+
+
+def test_manifest_declares_the_gateway_as_a_required_dependency(manifest):
+    (dependency,) = manifest["dependencies"]["apps"]
+    assert dependency["id"] == "mcp-gateway"
+    assert dependency["required"] is True
+    assert dependency["reason"].strip()
+
+
+def test_manifest_advertises_exactly_the_tools_the_sidecar_defines(manifest, sidecar):
+    declared = manifest["contributes"]["mcp"]["provides"]
+    assert set(declared) == TOOLS
+    assert len(declared) == len(TOOLS)
+    for tool in TOOLS:
+        assert f"def {tool}(" in sidecar
+
+
+def test_the_sidecar_port_agrees_across_mcp_json_dockerfile_and_source(mcp_json, sidecar):
+    assert "2719" in mcp_json["mcpServers"]["marimo"]["url"]
+    assert "EXPOSE 2719" in (ROOT / "container" / "Dockerfile").read_text()
+    assert 'os.environ.get("MARIMO_MCP_PORT", "2719")' in sidecar
+
+
+def test_the_sidecar_is_baked_into_the_image(sidecar):
+    """A Tier-2 update RECREATES the container, so anything pip-installed
+    into a running container is gone. The sidecar has to be in the image."""
+    dockerfile = (ROOT / "container" / "Dockerfile").read_text()
+    assert "COPY mcp_server.py /aw-mcp-server.py" in dockerfile
+    assert "ARG MCP_SDK_VERSION=" in dockerfile
+    assert '"mcp==${MCP_SDK_VERSION}"' in dockerfile
+
+
+def test_the_sidecar_cannot_take_the_notebook_ui_down(entrypoint_code):
+    """marimo stays the exec'd foreground process; the sidecar is a
+    background restart loop. Coupled fate would turn a sidecar bug into a UI
+    outage, which the card calls a regression."""
+    assert "python /aw-mcp-server.py || true" in entrypoint_code
+    assert entrypoint_code.index("/aw-mcp-server.py") < entrypoint_code.index("exec marimo edit")
+    assert "exec marimo edit" in entrypoint_code
+    assert "exec python /aw-mcp-server.py" not in entrypoint_code
+
+
+def test_the_healthcheck_still_probes_only_the_notebook_ui(manifest):
+    """Probing 2719 would recycle the container on a sidecar failure,
+    inverting the decoupling above."""
+    dockerfile = (ROOT / "container" / "Dockerfile").read_text()
+    healthcheck = [line for line in dockerfile.splitlines() if "127.0.0.1:" in line]
+    assert healthcheck and all("127.0.0.1:2718" in line for line in healthcheck)
+    assert "2719" not in "".join(healthcheck)
+
+
+def test_the_mcp_port_is_still_not_published_to_the_host(manifest):
+    """Internal network only — §6 forbids a new host port outright."""
+    assert "publish" not in manifest["runtime"]
+    assert manifest["runtime"]["port"] == 2718

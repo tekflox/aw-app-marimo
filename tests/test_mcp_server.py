@@ -424,6 +424,53 @@ def test_timeout_kills_the_whole_process_group_including_a_grandchild(root, tmp_
     assert not _alive(grandchild), f"orphan grandchild {grandchild} survived the timeout"
 
 
+def _defunct_children() -> list[int]:
+    """Our own zombie children, read from /proc — a killed grandchild that
+    nobody reaps shows up here and holds a PID slot forever."""
+    me = os.getpid()
+    out = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            status = (entry / "stat").read_text()
+        except OSError:
+            continue
+        fields = status.rsplit(")", 1)[-1].split()
+        if len(fields) >= 2 and fields[0] == "Z" and fields[1] == str(me):
+            out.append(int(entry.name))
+    return out
+
+
+def test_a_killed_grandchild_is_reaped_not_left_defunct(root, tmp_path):
+    """A `<defunct>` entry is dead, but it still holds a PID slot.
+
+    Seen live through the gateway before this was fixed: a 3s timeout on a
+    notebook that had spawned a child left `[python] <defunct>` in the
+    container's process table, because the grandchild re-parented to PID 1
+    (`marimo edit`), which never calls wait(). Subreaper + a group-scoped
+    waitpid is what clears it.
+    """
+    if not mcp_server.become_subreaper():
+        pytest.skip("kernel refused PR_SET_CHILD_SUBREAPER")
+
+    before = set(_defunct_children())
+    (root / "spawns.py").write_text(
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(9999)'])\n"
+        "time.sleep(9999)\n"
+    )
+
+    assert invoke("execute_notebook", path="spawns.py", timeout_seconds=3)["status"] == "timeout"
+
+    deadline = time.monotonic() + 10
+    leaked = set(_defunct_children()) - before
+    while leaked and time.monotonic() < deadline:
+        time.sleep(0.2)
+        leaked = set(_defunct_children()) - before
+    assert not leaked, f"killed grandchild left defunct: {sorted(leaked)}"
+
+
 def test_a_normal_run_also_leaves_no_background_child_behind(root, tmp_path):
     pidfile = tmp_path / "bg.pid"
     (root / "daemonish.py").write_text(

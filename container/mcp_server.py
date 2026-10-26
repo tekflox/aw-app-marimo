@@ -77,6 +77,10 @@ DEFAULT_TIMEOUT_SECONDS = 120
 MAX_TIMEOUT_SECONDS = 600
 MAX_CONCURRENT_EXECUTES = 2
 KILL_GRACE_SECONDS = 5
+#: How long _reap_group waits for a SIGKILLed group to actually become
+#: reapable. Bounded so a wedged descendant delays one run's reply, never
+#: the server.
+REAP_TIMEOUT_SECONDS = 2.0
 
 SKELETON = """import marimo
 
@@ -499,11 +503,65 @@ _running_lock = threading.Lock()
 _running = 0
 
 
+#: Linux prctl(2) option: make this process inherit its orphaned
+#: descendants instead of PID 1.
+PR_SET_CHILD_SUBREAPER = 36
+
+
+def become_subreaper() -> bool:
+    """Adopt orphaned descendants so we can reap them.
+
+    Killing a run's process group kills the notebook and its children
+    together, but a grandchild's parent (the notebook) dies too, so the
+    grandchild re-parents to PID 1 — which here is `marimo edit`, an
+    application that never calls wait(). The result is a `<defunct>` entry
+    per killed grandchild that nothing ever clears: measured live, a 3s
+    timeout on a notebook that spawned one left `[python] <defunct>` in the
+    container's process table. Dead, but it holds a PID slot until the
+    container is recreated.
+
+    As a subreaper those descendants re-parent to US instead, so
+    ``_reap_group`` can actually clear them. Best-effort: a kernel without
+    it (pre-3.4) or a refused prctl just leaves the previous behaviour.
+    """
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        return libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == 0
+    except Exception:  # no libc, not Linux, prctl refused
+        return False
+
+
 def _reap_group(pgid: int) -> None:
+    """SIGKILL everything left in the run's group, then reap the corpses.
+
+    ``waitpid`` is scoped to this run's own process GROUP (negative pid), so
+    a concurrent run cannot have its direct child reaped out from under its
+    own ``Popen.wait()`` — the two runs are in different groups by
+    construction (``start_new_session=True``).
+    """
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
         pass
+
+    # SIGKILL is delivered asynchronously, so the first WNOHANG sweep can
+    # run before the group has finished dying. Bailing there would leave
+    # exactly the `<defunct>` entry this function exists to clear, so give
+    # them a brief bounded window instead of a single pass.
+    deadline = time.monotonic() + REAP_TIMEOUT_SECONDS
+    while True:
+        try:
+            pid, _ = os.waitpid(-pgid, os.WNOHANG)
+        except ChildProcessError:
+            return  # nothing of ours left in the group
+        except OSError:
+            return
+        if pid == 0:
+            if time.monotonic() >= deadline:
+                return
+            time.sleep(0.02)
 
 
 def _capture(handle: Any) -> tuple[str, bool]:
@@ -654,9 +712,10 @@ async def execute_notebook(path: str, timeout_seconds: int | None = None) -> dic
 def main() -> None:
     root = notebooks_root()
     root.mkdir(parents=True, exist_ok=True)
+    subreaper = become_subreaper()
     print(
         f"aw-app-marimo MCP sidecar: 0.0.0.0:{PORT}/mcp, root={root}, "
-        f"allowed_hosts={allowed_hosts()}",
+        f"subreaper={subreaper}, allowed_hosts={allowed_hosts()}",
         file=sys.stderr,
         flush=True,
     )

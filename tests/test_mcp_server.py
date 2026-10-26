@@ -336,6 +336,27 @@ def test_execute_runs_with_the_notebook_root_as_cwd(root):
     assert result["stdout"].strip() == str(root)
 
 
+def test_execute_uses_the_configured_notebook_interpreter(root, monkeypatch, tmp_path):
+    """Not this process's own interpreter — the sidecar's venv has no marimo."""
+    marker = tmp_path / "which_python"
+    fake = tmp_path / "fake_python"
+    fake.write_text(f'#!/bin/sh\necho "$0" > {marker}\nexec {sys.executable} "$@"\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv(mcp_server.NOTEBOOK_PYTHON_ENV, str(fake))
+
+    (root / "who.py").write_text("print('ran')\n")
+    result = invoke("execute_notebook", path="who.py", timeout_seconds=30)
+
+    assert result["status"] == "ok"
+    assert result["stdout"].strip() == "ran"
+    assert marker.read_text().strip() == str(fake)
+
+
+def test_execute_falls_back_to_this_interpreter_when_unset(root, monkeypatch):
+    monkeypatch.delenv(mcp_server.NOTEBOOK_PYTHON_ENV, raising=False)
+    assert mcp_server.notebook_python() == sys.executable
+
+
 def test_execute_refuses_a_missing_notebook(root):
     assert refusal("execute_notebook", path="nope.py")["error"] == "not_found"
 

@@ -234,11 +234,41 @@ def test_the_sidecar_is_baked_into_the_image(sidecar):
     assert '"mcp==${MCP_SDK_VERSION}"' in dockerfile
 
 
+def test_the_mcp_sdk_never_lands_in_marimos_site_packages():
+    """marimo declares mcp>=2.0.0 for its OWN MCP-client feature and turns
+    that feature on the moment `mcp` imports. The sidecar needs mcp<2.0 for
+    FastMCP. Sharing one interpreter flips marimo's gate on with the wrong
+    API — measured live: a boot that blocks ~30s on a configured MCP preset
+    and raises on shutdown, which §3d calls a regression. Two interpreters
+    is the fix, and this is the assertion that keeps them apart."""
+    dockerfile = (ROOT / "container" / "Dockerfile").read_text()
+
+    # marimo is installed on its own, with no mcp riding along.
+    assert 'pip install --no-cache-dir "marimo==${MARIMO_VERSION}"\n' in dockerfile
+    # The SDK goes into the venv's pip, never the system one.
+    assert '"$MCP_VENV/bin/pip" install --no-cache-dir "mcp==${MCP_SDK_VERSION}"' in dockerfile
+
+    entrypoint = (ROOT / "container" / "entrypoint.sh").read_text()
+    assert "MCP_VENV:-/opt/aw-mcp-venv}/bin/python\" /aw-mcp-server.py" in entrypoint
+
+
+def test_notebooks_are_executed_by_the_system_interpreter():
+    """The sidecar's venv has no marimo in it, so `import marimo` in a
+    notebook fails unless execute is pointed back at the system python."""
+    dockerfile = (ROOT / "container" / "Dockerfile").read_text()
+    assert "ENV MARIMO_NOTEBOOK_PYTHON=/usr/local/bin/python" in dockerfile
+
+    sidecar_src = (ROOT / "container" / "mcp_server.py").read_text()
+    assert 'NOTEBOOK_PYTHON_ENV = "MARIMO_NOTEBOOK_PYTHON"' in sidecar_src
+    assert "[notebook_python(), str(resolved)]" in sidecar_src
+    assert "[sys.executable, str(resolved)]" not in sidecar_src
+
+
 def test_the_sidecar_cannot_take_the_notebook_ui_down(entrypoint_code):
     """marimo stays the exec'd foreground process; the sidecar is a
     background restart loop. Coupled fate would turn a sidecar bug into a UI
     outage, which the card calls a regression."""
-    assert "python /aw-mcp-server.py || true" in entrypoint_code
+    assert "/aw-mcp-server.py || true" in entrypoint_code
     assert entrypoint_code.index("/aw-mcp-server.py") < entrypoint_code.index("exec marimo edit")
     assert "exec marimo edit" in entrypoint_code
     assert "exec python /aw-mcp-server.py" not in entrypoint_code

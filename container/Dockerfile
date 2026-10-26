@@ -30,6 +30,21 @@ ARG MARIMO_VERSION=0.25.2
 # aw-mcp-gateway pins itself to.
 ARG MCP_SDK_VERSION=1.30.0
 
+# ...and it lives in its OWN venv, never in marimo's site-packages, because
+# the two want incompatible majors of the same package. marimo declares
+# `Dependency("mcp", min_version="2.0.0", max_version="3.0.0")`
+# (_dependencies/dependencies.py) for its own MCP *client* feature, which it
+# enables the moment `mcp` is importable. Installing 1.x beside marimo
+# flipped that gate on with the wrong API: a workspace whose
+# marimo.toml names an MCP preset then blocked ~30s on a connect at boot and
+# raised on shutdown — an observable change to the human UI, which this
+# app's scope calls a regression outright. Measured: on v0.2.1 the gate is
+# False ("No module named 'mcp'"); with 1.30.0 in site-packages it is True
+# plus "Mismatched version of mcp: expected >=2.0.0, got 1.30.0".
+# Separate interpreters is what keeps marimo's environment byte-identical to
+# the release before this one.
+ENV MCP_VENV=/opt/aw-mcp-venv
+
 # uv is what makes marimo's inline script dependencies (PEP 723) work: a
 # notebook can declare its own packages in a header comment and marimo asks
 # uv to materialise them. That is the sanctioned reproducibility path here,
@@ -46,7 +61,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends procps \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir "marimo==${MARIMO_VERSION}" "mcp==${MCP_SDK_VERSION}"
+RUN pip install --no-cache-dir "marimo==${MARIMO_VERSION}"
+
+RUN python -m venv "$MCP_VENV" \
+    && "$MCP_VENV/bin/pip" install --no-cache-dir "mcp==${MCP_SDK_VERSION}"
+
+# Notebooks are executed by the SYSTEM interpreter, not the sidecar's. The
+# venv above deliberately has no marimo in it, so `import marimo` in a
+# notebook would fail if execute_notebook reached for its own
+# `sys.executable`.
+ENV MARIMO_NOTEBOOK_PYTHON=/usr/local/bin/python
 
 COPY entrypoint.sh /aw-entrypoint.sh
 COPY mcp_server.py /aw-mcp-server.py

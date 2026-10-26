@@ -62,6 +62,15 @@ PORT = int(os.environ.get("MARIMO_MCP_PORT", "2719"))
 NOTEBOOKS_DIR_ENV = "MARIMO_NOTEBOOKS_DIR"
 DEFAULT_NOTEBOOKS_DIR = "/data/notebooks"
 
+#: The interpreter notebooks run under — deliberately NOT this process's own.
+#: This server lives in its own venv (marimo wants mcp>=2.0 for its own MCP
+#: client, FastMCP needs mcp<2.0, so they cannot share site-packages), and
+#: that venv has no marimo in it. Reaching for `sys.executable` here would
+#: make `import marimo` fail in every notebook. The image sets this to the
+#: system python; the default keeps the test suite, which runs the server
+#: and the notebooks under one interpreter, working unchanged.
+NOTEBOOK_PYTHON_ENV = "MARIMO_NOTEBOOK_PYTHON"
+
 MAX_CONTENT_BYTES = 1024 * 1024          # 1 MiB per write
 MAX_STREAM_BYTES = 64 * 1024             # 64 KiB per captured stream
 DEFAULT_TIMEOUT_SECONDS = 120
@@ -107,6 +116,10 @@ def _fail(code: str, message: str, **extra: Any) -> ToolError:
 
 def notebooks_root() -> Path:
     return Path(os.environ.get(NOTEBOOKS_DIR_ENV, DEFAULT_NOTEBOOKS_DIR)).resolve()
+
+
+def notebook_python() -> str:
+    return os.environ.get(NOTEBOOK_PYTHON_ENV) or sys.executable
 
 
 def resolve_notebook_path(path: str) -> Path:
@@ -513,7 +526,7 @@ def _run_notebook(resolved: Path, timeout: int, root: Path) -> dict[str, Any]:
     # read-back instead of by buffering an unbounded stream in memory.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(
-            [sys.executable, str(resolved)],
+            [notebook_python(), str(resolved)],
             cwd=str(root),
             stdin=subprocess.DEVNULL,
             stdout=out,

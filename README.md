@@ -223,6 +223,17 @@ workspace network membership", the same posture as `aw-app-kb`.
 
 ### How the sidecar is supervised
 
+The sidecar runs on **its own interpreter**, a venv at `/opt/aw-mcp-venv`,
+never marimo's site-packages. The two need incompatible majors of the same
+package: marimo declares `mcp>=2.0,<3.0` for its own MCP-*client* feature
+and switches that feature on the moment `mcp` is importable, while FastMCP
+needs `mcp<2.0`. Installing the SDK next to marimo flips that gate on with
+the wrong API — measured on the v0.4.0 image: `has()` true, a "Mismatched
+version of mcp: expected >=2.0.0, got 1.30.0" warning, and marimo
+announcing MCP servers at boot it cannot drive. Notebooks are executed by
+the **system** python (`MARIMO_NOTEBOOK_PYTHON`), not the sidecar's, because
+that venv has no marimo in it and `import marimo` would otherwise fail.
+
 `entrypoint.sh` starts it in a background restart loop and keeps
 `exec marimo edit` as the container's foreground process, so a crash in the
 sidecar can never take the notebook UI down. The `HEALTHCHECK` deliberately

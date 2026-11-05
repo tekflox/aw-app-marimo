@@ -35,8 +35,15 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
+        # Only pytest + jsonschema, plus this repo's own requirements-dev.txt
+        # (pins `mcp`, whose own PyPI metadata already requires httpx/
+        # starlette/uvicorn transitively). No `fastapi` anywhere in this
+        # repo — round 1 of this PR's own review loop flagged the
+        # fleet-reference superset's fastapi/httpx/uvicorn as dead weight
+        # here, correctly: this suite talks to its sidecar over
+        # urllib.request/raw sockets, not httpx.
         run: |
-          pip install -q pytest jsonschema fastapi httpx uvicorn
+          pip install -q pytest jsonschema
           if [ -f requirements.txt ]; then
             pip install -q -r requirements.txt
           fi

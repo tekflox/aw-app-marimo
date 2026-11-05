@@ -309,3 +309,5 @@ whether marimo works behind this proxy (it does, unmodified: no
 `X-Frame-Options`, no CSP, relative asset URLs, tolerant of foreign
 `Host`/`X-Forwarded-*`, and a WebSocket that reaches `kernel-ready` through
 a bare cookie-less connect) and the alternatives that were rejected.
+
+<!-- aw-app-* fleet migration B2: follow-up no-op PR proving the comment + workflow_run merge paths (DESIGN.md §3 step 8). -->
